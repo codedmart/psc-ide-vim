@@ -51,8 +51,8 @@ if !exists('s:projectvalid')
   let s:projectvalid = 0
 endif
 
-"Looks for psc-package.json or bower.json, assumes that's the root directory, starts
-"psc-ide-server in the background
+"Looks for bower.json, assumes that's the root directory, starts
+"`purs ide server` in the background
 "Returns Nothing
 command! PSCIDEstart call PSCIDEstart(0)
 function! PSCIDEstart(silent)
@@ -62,18 +62,19 @@ function! PSCIDEstart(silent)
   let loglevel = a:silent == 1 ? 1 : 0
 
   let dir = s:findRoot()
+  call s:log("PSCIDEstart: cwd " . dir, 3)
 
   if empty(dir)
-    echom "No psc-package.json or bower.json found, couldn't start psc-ide-server"
+    echom "No psc-package.json or bower.json found, couldn't start `purs ide server`"
     return
   endif
 
-  call s:log("PSCIDEstart: Starting psc-ide-server at " . dir . " on port " . g:psc_ide_server_port, loglevel)
+  call s:log("PSCIDEstart: Starting `purs ide server` at " . dir . " on port " . g:psc_ide_server_port, loglevel)
 
   if has('win16') || has('win32') || has('win64')
-    let command = "start /b psc-ide-server " . dir . "/src/**/*.purs " . dir . "/bower_components/**/*.purs -p " . g:psc_ide_server_port . " -d " . dir
+    let command = "start /b purs ide server " . dir . "/src/**/*.purs " . dir . "/bower_components/**/*.purs -p " . g:psc_ide_server_port . " -d " . dir
   else
-    let command = "psc-ide-server \"src/**/*.purs\" \"bower_components/**/*.purs\" -p " . g:psc_ide_server_port . " -d " . dir . " > /dev/null &"
+    let command = "purs ide server \"./src/**/*.purs\" \"./bower_components/**/*.purs\" -p " . g:psc_ide_server_port . " -d " . dir . " > /dev/null &"
   endif
   let resp = system(command)
 
@@ -109,11 +110,11 @@ endfunction
 
 " Find root folder ----------------------------------------------------
 function! s:findRoot()
-  let pscPackage = findfile("psc-package.json", fnameescape(expand("%:p:h")).";")
+  let pscPackage = findfile("psc-package.json", expand("%:p:h").";")
   if !empty(pscPackage)
     return fnamemodify(pscPackage, ":h:p")
   else
-    let bower = findfile("bower.json", fnameescape(expand("%:p:h")).";")
+    let bower = findfile("bower.json", expand("%:p:h").";")
     if !empty(bower)
       return fnamemodify(bower, ":h:p")
     else
@@ -123,14 +124,14 @@ function! s:findRoot()
 endfunction
 
 " END ------------------------------------------------------------------------
-" Tell the psc-ide-server to quit
+" Tell the `purs ide server` to quit
 command! PSCIDEend call PSCIDEend()
 function! PSCIDEend()
   if s:pscideexternal == 1
     return
   endif
   let input = {'command': 'quit'}
-  let resp = s:mysystem("psc-ide-client -p " . g:psc_ide_server_port, s:jsonEncode(input))
+  let resp = s:mysystem("purs ide client -p " . g:psc_ide_server_port, s:jsonEncode(input))
   let s:pscidestarted = 0
   let s:projectvalid = 0
 endfunction
@@ -152,7 +153,7 @@ function! s:projectProblems()
 endfunction
 
 " LOAD -----------------------------------------------------------------------
-" Load module of current buffer + its dependencies into psc-ide-server
+" Load module of current buffer + its dependencies into `purs ide server`
 command! PSCIDEload call PSCIDEload(0)
 function! PSCIDEload(silent)
   let loglevel = a:silent == 1 ? 1 : 0
@@ -377,7 +378,7 @@ function! PSCIDEaddTypeAnnotation()
 endfunction
 
 " CWD ------------------------------------------------------------------------
-" Get current working directory of psc-ide-server
+" Get current working directory of `pure ide server`
 command! PSCIDEcwd call PSCIDEcwd()
 function! PSCIDEcwd()
   let resp = s:callPscIde({'command': 'cwd'}, "Failed to get current working directory", 0)
@@ -453,60 +454,21 @@ function! PSCIDEtype()
   endif
 endfunction
 
-" LISTIMPORTS -----------------------------------------------------------------------
-" List the modules imported by the current module
-command! PSCIDElistImports call PSCIDElistImports()
-function! PSCIDElistImports()
+function! s:getType(identifier)
   let currentModule = s:ExtractModule()
-  call s:log('PSCIDElistImports ' . currentModule, 3)
-  let result = s:ListImports(currentModule)
-  if type(result) == type([])
-    for e in result
-      echom e
-    endfor
-  else
-    echom "PSC-IDE: No import information found for " . currentModule
-  endif
-endfunction
+  call s:log('PSCIDE s:getType currentModule: ' . currentModule, 3)
 
-function! s:ListImports(module)
-  let filename = expand("%:p")
-  call s:log('PSCIDE s:ListImports ' . a:module . ' in file ' . filename, 1)
-  let resp = s:callPscIde({'command': 'list', 'params': {'type': 'import', 'file': filename}}, 'Failed to get imports for: ' . a:module, 0)
-  call s:log("PSCIDE s:ListImports result: " . string(resp), 3)
-  " Only need module names right now, so pluck just those.
+  let resp = s:callPscIde({'command': 'type', 'params': {'search': a:identifier, 'filters': [], 'currentModule': currentModule}}, 'Failed to get type info for: ' . a:identifier, 0)
+
   if type(resp) == type({}) && resp['resultType'] ==# 'success'
-    " psc-ide >=0.11 returns imports on 'imports' property.
-    let imports = type(resp['result']) == type([]) ? resp['result'] : resp['result']['imports']
-    if len(imports) > 0
-      let result = []
-      for entry in imports
-        call add(result, entry['module'])
-      endfor
-      return result
-    else
-      return []
+    if len(resp["result"]) > 0
+      return resp["result"]
     endif
   endif
 endfunction
 
-
-function! s:getType(identifier)
-  let currentModule = s:ExtractModule()
-  let importedModules = s:ListImports(currentModule)
-  call s:log('PSCIDE s:getType currentModule: ' . currentModule, 3)
-
-  let resp = s:callPscIde( {'command': 'type', 'params': {'search': a:identifier , 'filters': [ {'filter': 'modules' , 'params': {'modules': importedModules } }], 'currentModule': currentModule} }, 'Failed to get type info for: ' . a:identifier, 0)
-
-  if type(resp) == type({}) && resp['resultType'] ==# 'success'
-    return resp['result']
-  else
-    return ''
-  endif
-endfunction
-
 function! s:formattype(record)
-  return s:CleanEnd(s:StripNewlines(a:record['module']) . '.' . s:StripNewlines(a:record['identifier']) . ' ∷ ' . s:StripNewlines(a:record['type']))
+  return s:CleanEnd(s:StripNewlines(a:record['module']) . '.' . s:StripNewlines(a:record['identifier']) . ' :: ' . s:StripNewlines(a:record['type']))
 endfunction
 
 " APPLYSUGGESTION ------------------------------------------------------
@@ -750,7 +712,7 @@ function! s:callPscIde(input, errorm, isRetry)
     let cwdcommand = {'command': 'cwd'}
 
     call s:log("callPscIde: No server found, looking for external server", 1)
-    let cwdresp = s:mysystem("psc-ide-client -p " . g:psc_ide_server_port, s:jsonEncode(cwdcommand))
+    let cwdresp = s:mysystem("purs ide client -p " . g:psc_ide_server_port, s:jsonEncode(cwdcommand))
     call s:log("callPscIde: Raw response of trying to reach external server: " . cwdresp, 1)
     let cwdrespDecoded = PscIdeDecodeJson(s:StripNewlines(cwdresp))
     call s:log("callPscIde: Decoded response of trying to reach external server: " 
@@ -776,7 +738,7 @@ function! s:callPscIde(input, errorm, isRetry)
     endif
 
     call s:log("callPscIde: Trying to reach server again", 1)
-    let cwdresp2 = s:mysystem("psc-ide-client -p " . g:psc_ide_server_port, s:jsonEncode(cwdcommand))
+    let cwdresp2 = s:mysystem("purs ide client -p " . g:psc_ide_server_port, s:jsonEncode(cwdcommand))
     call s:log("callPscIde: Raw response of trying to reach server again: " . cwdresp2, 1)
     let cwdresp2Decoded = PscIdeDecodeJson(s:StripNewlines(cwdresp2))
     call s:log("callPscIde: Decoded response of trying to reach server again: " 
@@ -794,7 +756,7 @@ function! s:callPscIde(input, errorm, isRetry)
   endif
 
   let enc = s:jsonEncode(a:input)
-  let resp = s:mysystem("psc-ide-client -p " . g:psc_ide_server_port, enc)
+  let resp = s:mysystem("purs ide client -p " . g:psc_ide_server_port, enc)
   call s:log("callPscIde: Raw response: " . resp, 3)
 
   if resp =~? "connection refused"  "TODO: This check is probably not crossplatform
@@ -805,7 +767,7 @@ function! s:callPscIde(input, errorm, isRetry)
       call s:log("callPscIde: Error: Failed to contact server", 0)
     endif
     if !a:isRetry
-      " Seems saving often causes psc-ide-server to crash. Haven't been able
+      " Seems saving often causes `purs ide server` to crash. Haven't been able
       " to figure out why. It doesn't crash when I run it externally...
       " retrying is then the next best thing
       return s:callPscIde(a:input, a:errorm, 1) " Keeping track of retries so we only retry once
